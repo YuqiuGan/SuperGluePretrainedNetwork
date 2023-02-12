@@ -31,6 +31,8 @@ def read_xml(FName):
     descriptors = torch.from_numpy(descriptors).float().to(device)
     scores = cv_file.getNode("superpoint_score").mat()
     scores = torch.from_numpy(scores).float().to(device)
+    # reshape scores from [N, 1] to [N]
+    scores = scores.reshape(scores.shape[0])
     return [keypoints, descriptors, scores]
 
 if __name__ == '__main__':
@@ -38,12 +40,15 @@ if __name__ == '__main__':
         description='SuperGlue demo',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
-        '--input_dir', type=str, default=None,
+        '--input', type=str, default=None,
         help='input folder of images need to be matched')
     parser.add_argument(
         '--output_dir', type=str, default=None,
         help='Directory where to write output frames (If None, no output)')
-
+    parser.add_argument(
+        '--feature_dir', type=str, default=None,
+        help='Directory where contains the xml features'
+    )
     parser.add_argument(
         '--image_glob', type=str, nargs='+', default=['*.png', '*.jpg', '*.jpeg'],
         help='Glob if a directory of images is specified')
@@ -123,42 +128,48 @@ if __name__ == '__main__':
     
     vs = VideoStreamer(opt.input, opt.resize, opt.skip,
                        opt.image_glob, opt.max_length)
-    frame, ret = vs.next_frame()
+    first_frame, ret = vs.next_frame()
     assert ret, 'Error when reading the first frame (try different --input?)'
 
-    frame_tensor = frame2tensor(frame, device)
+    first_frame_tensor = frame2tensor(first_frame, device)
     # Create the output directories
-    input_dir = Path(opt.input_dir)
+    input_dir = Path(opt.input)
     print('Looking for data in directory \"{}\"'.format(input_dir))
     output_dir = Path(opt.output_dir)
     output_dir.mkdir(exist_ok=True, parents=True)
     print('Will write matches to directory \"{}\"'.format(output_dir))
-    feature_dir = os.path.join(str(input_dir).replace("masked_rgb", "features"), "superpoint_results")
+    feature_dir = Path(opt.feature_dir)
     feature_list = list(Path(feature_dir).glob("*.xml"))
     # frame_list = list(Path(input_dir).glob("*.png"))
     feature_list.sort()
     # frame_list.sort()
-    first_feature = read_xml(feature_list[0])
-    first_frame = frame_tensor
+    first_feature = read_xml(os.path.join(feature_dir, feature_list[0]))
     last_feature = first_feature
     last_frame = first_frame
+    last_frame_tensor = first_frame_tensor
     keys = ['keypoints', 'scores', 'descriptors']
     for idx, feature in enumerate(tqdm(feature_list[1:])):
         current_frame, ret = vs.next_frame()
         current_frame_tensor = frame2tensor(current_frame, device)
-        current_feature = read_xml(feature)
+        current_feature = read_xml(os.path.join(feature_dir, feature))
         last_data = {
-            'keypoints0': last_feature[0],
-            'descriptors0': last_feature[1],
-            'scores0':last_feature[2],
-            'image0': last_frame
+            'keypoints0': [last_feature[0]],
+            'descriptors0': [last_feature[1]],
+            'scores0':[last_feature[2]],
+            'image0': last_frame_tensor
         }
         current_data = {
-            'keypoints1': current_feature[0],
-            'descriptors1': current_feature[1],
-            'scores1':current_feature[2],
+            'keypoints1': [current_feature[0]],
+            'descriptors1': [current_feature[1]],
+            'scores1':[current_feature[2]],
             'image1': current_frame_tensor
         }
+        # last_data = {
+        #     'image0': last_frame
+        # }
+        # current_data = {
+        #     'image1': current_frame_tensor
+        # }
         pred = matching({**last_data, **current_data})
         kpts0 = last_data['keypoints0'][0].cpu().numpy()
         kpts1 = current_data['keypoints1'][0].cpu().numpy()
@@ -182,7 +193,7 @@ if __name__ == '__main__':
             'Image Pair: {:06}:{:06}'.format(idx-1, idx),
         ]
         out = make_matching_plot_fast(
-            last_frame, frame, kpts0, kpts1, mkpts0, mkpts1, color, text,
+            last_frame, current_frame, kpts0, kpts1, mkpts0, mkpts1, color, text,
             path=None, show_keypoints=opt.show_keypoints, small_text=small_text)
         
         if not opt.no_display:
@@ -221,7 +232,8 @@ if __name__ == '__main__':
             print('\nWriting image to {}'.format(out_file))
             cv2.imwrite(out_file, out)
 
-        last_frame = current_frame_tensor
+        last_frame = current_frame
+        last_frame_tensor = current_frame_tensor
         last_feature = current_feature
 
     # need to implement:
