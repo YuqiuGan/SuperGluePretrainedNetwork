@@ -8,7 +8,8 @@ import matplotlib.cm as cm
 import torch
 import numpy as np
 import os
-
+import torch.nn as nn
+import torch.nn.functional as F
 from models.matching import Matching
 from models.utils import (AverageTimer, VideoStreamer,
                           make_matching_plot_fast, frame2tensor)
@@ -23,16 +24,40 @@ def write_xml(kp, des, score, FName):
     cv_file.release() 
     return True
 
-def read_xml(FName):
+def read_xml(FName, feature_type):
     cv_file = cv2.FileStorage(FName, cv2.FILE_STORAGE_READ)
-    keypoints = cv_file.getNode("superpoint_keypoints").mat()
-    keypoints = torch.from_numpy(keypoints).float().to(device)
-    descriptors = cv_file.getNode("superpoint_descriptors").mat()
-    descriptors = torch.from_numpy(descriptors).float().to(device)
-    scores = cv_file.getNode("superpoint_score").mat()
-    scores = torch.from_numpy(scores).float().to(device)
-    # reshape scores from [N, 1] to [N]
-    scores = scores.reshape(scores.shape[0])
+    if feature_type == "SuperPoint":
+        # SuperPoint kpts shape [N*2]
+        keypoints = cv_file.getNode("superpoint_keypoints").mat()
+        keypoints = torch.from_numpy(keypoints).float().to(device)
+        # SuperPoint desc shape [256*N]
+        descriptors = cv_file.getNode("superpoint_descriptors").mat()
+        descriptors = torch.from_numpy(descriptors).float().to(device)
+        scores = cv_file.getNode("superpoint_score").mat()
+        scores = torch.from_numpy(scores).float().to(device)
+        # reshape scores from [N, 1] to [N]
+        scores = scores.reshape(scores.shape[0])
+    elif feature_type == "R2D2":
+        # R2D2 kpts shape [N*3] (x, y and scale)
+        keypoints = cv_file.getNode("r2d2_keypoints").mat()
+        keypoints = keypoints[:, :2]
+        keypoints = torch.from_numpy(keypoints).float().to(device)
+        # output_tensor = torch.zeros_like(keypoints)
+        # output_tensor[:, 0] = keypoints[:, 1]
+        # output_tensor[:, 1] = keypoints[:, 0]
+        # keypoints = output_tensor
+        # R2D2 desc shape [N*128] upsample and reshape to [256*N]
+        descriptors = cv_file.getNode("r2d2_descriptors").mat()
+        descriptors = torch.from_numpy(descriptors).float().to(device)
+        # test_d = descriptors[:2, :]
+        # print(test_d.shape)
+        descriptors = F.interpolate(descriptors.unsqueeze(0), size=256, mode='nearest').squeeze(0).transpose(0, 1)
+        # print(upscale.shape)
+        
+        # R2D2 scores shape [N]
+        # scores = cv_file.getNode("r2d2_score").mat()
+        scores = np.full((1000), 0.2)
+        scores = torch.from_numpy(scores).float().to(device)
     return [keypoints, descriptors, scores]
 
 if __name__ == '__main__':
@@ -45,6 +70,10 @@ if __name__ == '__main__':
     parser.add_argument(
         '--output_dir', type=str, default=None,
         help='Directory where to write output frames (If None, no output)')
+    parser.add_argument(
+        '--feature_type', type=str, default=None,
+        help='Feature extraction type'
+    )
     parser.add_argument(
         '--feature_dir', type=str, default=None,
         help='Directory where contains the xml features'
@@ -143,7 +172,7 @@ if __name__ == '__main__':
     # frame_list = list(Path(input_dir).glob("*.png"))
     feature_list.sort()
     # frame_list.sort()
-    first_feature = read_xml(os.path.join(feature_dir, feature_list[0]))
+    first_feature = read_xml(os.path.join(feature_dir, feature_list[0]), opt.feature_type)
     last_feature = first_feature
     last_frame = first_frame
     last_frame_tensor = first_frame_tensor
@@ -151,7 +180,7 @@ if __name__ == '__main__':
     for idx, feature in enumerate(tqdm(feature_list[1:])):
         current_frame, ret = vs.next_frame()
         current_frame_tensor = frame2tensor(current_frame, device)
-        current_feature = read_xml(os.path.join(feature_dir, feature))
+        current_feature = read_xml(os.path.join(feature_dir, feature), opt.feature_type)
         last_data = {
             'keypoints0': [last_feature[0]],
             'descriptors0': [last_feature[1]],
