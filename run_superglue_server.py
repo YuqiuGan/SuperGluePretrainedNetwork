@@ -128,23 +128,32 @@ class SuperGlueMatcher:
         if len(matches) == 0:
             return []
 
-        # build D-match
+        # prepare visualization
         valid = matches > -1
         xys_query_valid = xys_query[valid]
         xys_train_valid = xys_train[matches[valid]]
         color = cm.jet(confidence[valid])
         text = [
-            'SuperGlue',
-            'Keypoints: {}:{}'.format(len(xys_query), len(xys_train)),
-            'Matches: {}'.format(len(xys_query_valid))
+            "SuperGlue",
+            "Keypoints: {}:{}".format(len(xys_query), len(xys_train)),
+            "Matches: {}".format(len(xys_query_valid)),
         ]
 
         # visualize matches
         img_vis = make_matching_plot_fast(
-            image_query_gray, image_train_gray, xys_query, xys_train, xys_query_valid, xys_train_valid, color, text,
-            path=None, show_keypoints=True)
-        
-        cv2.imshow('SuperGlue', img_vis)
+            image_query_gray,
+            image_train_gray,
+            xys_query,
+            xys_train,
+            xys_query_valid,
+            xys_train_valid,
+            color,
+            text,
+            path=None,
+            show_keypoints=True,
+        )
+
+        cv2.imshow("SuperGlue", img_vis)
         cv2.waitKey(0)
         return
 
